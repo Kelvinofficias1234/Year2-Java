@@ -8,6 +8,7 @@ import org.jsoup.select.Elements;
 
 public class GutenbergBookExplorer {
 
+    private static final String TARGET_URL = "https://books.toscrape.com/";
     private static final int MAX_READING_LIST = 20;
     private static Book[] catalog = new Book[50];
     private static int catalogCount = 0;
@@ -47,7 +48,7 @@ public class GutenbergBookExplorer {
                     }
                     break;
                 case 3:
-                    System.out.print("Enter author keyword to search: ");
+                    System.out.print("Enter author/price/availability keyword to search: ");
                     String authorKeyword = scanner.nextLine().trim();
                     if (authorKeyword.isEmpty()) {
                         System.out.println("Search keyword cannot be empty.\n");
@@ -68,7 +69,7 @@ public class GutenbergBookExplorer {
                     displayBookDetails();
                     break;
                 case 0:
-                    System.out.println("Exiting Gutenberg Book Explorer. Goodbye, CEO Joel!");
+                    System.out.println("Exiting Book Explorer. Goodbye, CEO Joel!");
                     break;
                 default:
                     System.out.println("Invalid choice. Please select an option from 0 to 7.\n");
@@ -79,10 +80,10 @@ public class GutenbergBookExplorer {
 
     private static void printMenu() {
         System.out.println("===");
-        System.out.println("GUTENBERG BOOK EXPLORER");
+        System.out.println("BOOKS TO SCRAPE EXPLORER");
         System.out.println("1. Explore Books");
         System.out.println("2. Search by Title");
-        System.out.println("3. Search by Author");
+        System.out.println("3. Search by Author / Info");
         System.out.println("4. Add Book to Reading List");
         System.out.println("5. View Reading List");
         System.out.println("6. Remove Book");
@@ -90,34 +91,38 @@ public class GutenbergBookExplorer {
         System.out.println("0. Exit");
     }
 
-    // 1. Explore Books using JSoup (retrieves at least 10 books)
+    // 1. Explore Books using JSoup (retrieves books from Books to Scrape)
     static void exploreBooks() {
-        System.out.println("\nConnecting to Project Gutenberg...");
+        System.out.println("\nConnecting to Books to Scrape (" + TARGET_URL + ")...");
         try {
-            Document doc = Jsoup.connect("https://www.gutenberg.org/browse/scores/top")
+            Document doc = Jsoup.connect(TARGET_URL)
                     .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .timeout(15000)
                     .get();
 
-            Elements links = doc.select("a[href*=/ebooks/]");
+            Elements bookCards = doc.select("article.product_pod");
             catalogCount = 0;
 
-            for (Element link : links) {
+            for (Element card : bookCards) {
                 if (catalogCount >= catalog.length) {
                     break;
                 }
 
-                String rawText = link.text().trim();
-                String href = link.absUrl("href").trim();
+                Element titleLink = card.selectFirst("h3 a[title]");
+                if (titleLink == null) {
+                    titleLink = card.selectFirst("h3 a");
+                }
+                if (titleLink == null) {
+                    continue;
+                }
 
-                if (rawText.isEmpty() || href.isEmpty()) {
-                    continue;
-                }
-                if (rawText.equalsIgnoreCase("Top 100") || rawText.toLowerCase().startsWith("top ")) {
-                    continue;
-                }
-                if (href.contains(".epub") || href.contains(".mobi") || href.contains(".html") || href.contains(".txt") || href.contains("#")) {
+                String title = titleLink.hasAttr("title") && !titleLink.attr("title").trim().isEmpty()
+                        ? titleLink.attr("title").trim()
+                        : titleLink.text().trim();
+                String href = titleLink.absUrl("href").trim();
+
+                if (title.isEmpty() || href.isEmpty()) {
                     continue;
                 }
 
@@ -132,32 +137,30 @@ public class GutenbergBookExplorer {
                     continue;
                 }
 
-                String cleaned = rawText.replaceAll("\\s*\\(\\d+\\)$", "").trim();
-                String title = cleaned;
-                String author = "Unknown Author";
+                Element priceEl = card.selectFirst(".price_color");
+                Element availEl = card.selectFirst(".instock.availability, .availability");
 
-                int byIndex = cleaned.lastIndexOf(" by ");
-                if (byIndex != -1) {
-                    title = cleaned.substring(0, byIndex).trim();
-                    String parsedAuthor = cleaned.substring(byIndex + 4).trim();
-                    if (!parsedAuthor.isEmpty()) {
-                        author = parsedAuthor;
-                    }
-                }
+                String price = (priceEl != null && !priceEl.text().trim().isEmpty())
+                        ? priceEl.text().trim()
+                        : "N/A";
+                String availability = (availEl != null && !availEl.text().trim().isEmpty())
+                        ? availEl.text().trim()
+                        : "Unknown Availability";
 
-                catalog[catalogCount] = new Book(title, author, href);
+                String infoField = price + " | " + availability;
+                catalog[catalogCount] = new Book(title, infoField, href);
                 catalogCount++;
             }
 
             if (catalogCount == 0) {
-                System.out.println("Connected to Gutenberg, but 0 book links matched. Page title: " + doc.title() + "\n");
+                System.out.println("Connected to Books to Scrape, but 0 books matched. Page title: " + doc.title() + "\n");
                 return;
             }
 
-            int displayLimit = Math.max(10, Math.min(15, catalogCount));
-            System.out.println("\n--- Top Books from Project Gutenberg ---");
-            for (int i = 0; i < displayLimit && i < catalogCount; i++) {
-                System.out.println((i + 1) + ". " + catalog[i].getTitle() + " | Author: " + catalog[i].getAuthor());
+            int displayLimit = Math.min(20, catalogCount);
+            System.out.println("\n--- Books from Books to Scrape (Showing " + displayLimit + " of " + catalogCount + " loaded) ---");
+            for (int i = 0; i < displayLimit; i++) {
+                System.out.println((i + 1) + ". " + catalog[i].getTitle() + " | Info: " + catalog[i].getAuthor());
             }
             System.out.println();
 
@@ -171,7 +174,7 @@ public class GutenbergBookExplorer {
         searchBook(title, false);
     }
 
-    // Overloaded searchBook #2: Search by author when true, otherwise by title
+    // Overloaded searchBook #2: Search by author/info when true, otherwise by title
     static void searchBook(String keyword, boolean searchByAuthor) {
         if (catalogCount == 0) {
             System.out.println("No books loaded yet. Please run '1. Explore Books' first.\n");
@@ -181,7 +184,7 @@ public class GutenbergBookExplorer {
         String lowerKeyword = keyword.toLowerCase();
         int matches = 0;
 
-        System.out.println("\n--- Search Results (" + (searchByAuthor ? "Author" : "Title") + ": \"" + keyword + "\") ---");
+        System.out.println("\n--- Search Results (" + (searchByAuthor ? "Info/Author" : "Title") + ": \"" + keyword + "\") ---");
         for (int i = 0; i < catalogCount; i++) {
             String target = searchByAuthor ? catalog[i].getAuthor() : catalog[i].getTitle();
             if (target.toLowerCase().contains(lowerKeyword)) {
@@ -289,7 +292,7 @@ public class GutenbergBookExplorer {
         System.out.println("Removed \"" + removedTitle + "\" from your reading list.\n");
     }
 
-    // 7. Display title, author, and Gutenberg URL
+    // 7. Display title, info/author, and book URL
     static void displayBookDetails() {
         if (catalogCount == 0 && readingCount == 0) {
             System.out.println("No books available yet. Run '1. Explore Books' first.\n");
@@ -297,7 +300,7 @@ public class GutenbergBookExplorer {
         }
 
         System.out.println("\nView details from:");
-        System.out.println("1. Explored Gutenberg Books");
+        System.out.println("1. Explored Books");
         System.out.println("2. My Reading List");
         System.out.print("Choose source: ");
         String sourceChoice = scanner.nextLine().trim();
@@ -350,7 +353,7 @@ public class GutenbergBookExplorer {
     private static void printSingleBookDetails(Book book) {
         System.out.println("\n--- Book Details ---");
         System.out.println("Title : " + book.getTitle());
-        System.out.println("Author: " + book.getAuthor());
+        System.out.println("Info  : " + book.getAuthor());
         System.out.println("URL   : " + book.getUrl());
         System.out.println();
     }
